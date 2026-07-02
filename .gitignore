@@ -1,0 +1,31 @@
+# Gradle build system
+.gradle/
+build/
+app/build/
+
+# Android Studio / IntelliJ IDE state (regenerated on import, never commit)
+.idea/
+*.iml
+.kotlin/
+captures/
+
+# Local machine configuration (contains the SDK path for THIS machine)
+local.properties
+
+# Compiled and packaged outputs
+*.apk
+*.aab
+*.dex
+*.class
+out/
+
+# Signing keys (never commit keystores)
+*.jks
+*.keystore
+
+# Logs and OS junk
+*.log
+.DS_Store
+
+# Version control helpers
+*.orig

@@ -1,0 +1,7 @@
+^XA^CFA,30,15^LL1200
+^ILR:IS_Example.GRF
+^FO200,200^IMR:IS_Example.GRF.GRF^FS
+^IDR:ID_Deleting.GRF
+
+^HWR:*.*
+^XZ

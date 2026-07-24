@@ -1,0 +1,115 @@
+{
+  "_comment": "Shared UI metadata for both sister apps (Mac tool + Android printer_app). Keyed by code-set number. 'description' shows under the row title, 'button' overrides the default Print button text on single-section sets, 'sections' overrides the filename-derived label for numbered sections. 'sets_media'/'sets_print_mode' name a MEDIA_TRACKING_MODES/PRINT_MODES key that this set's own payload configures on the printer - sending it also updates the app's Media/Print mode selector to match, so auto-restore reasserts that mode instead of silently reverting it. 'isolation': 'off' exempts a set from the isolated tab's restore-sandwich (for sets that deliberately test persistent state or queue semantics); apps without an isolated tab ignore the key.",
+  "1": { "description": "Prints 1 label: Aztec, Code 11, I 2-of-5, Code 39, Code 49, Planet barcodes." },
+  "2": { "description": "Prints the same barcodes as 01, with the text wrapped in ^FB field blocks." },
+  "3": { "description": "Prints 1 label: PDF417, EAN-8, UPC-E, Code 93, Codablock, Code 128 barcodes." },
+  "4": { "description": "Prints 1 label: UPS MaxiCode, EAN-13, MicroPDF417, 2-of-5 variants, Codabar." },
+  "5": { "description": "Prints 1 label with a single UPS MaxiCode barcode." },
+  "6": { "description": "Prints 1 label: LOGMARS, MSI, Aztec, Plessey, QR, RSS barcodes." },
+  "7": { "description": "Prints 1 label: UPC-EAN extension, TLC39, UPC-A, Data Matrix, POSTNET." },
+  "8": { "description": "Prints font samples A-H; remaps caret/delimiter chars mid-label (restores them)." },
+  "9": { "description": "Prints font samples P-V and 0." },
+  "10": { "description": "Prints shapes, reversed colors, rotated text. Leaves ^LR line-reverse ON (persistent)." },
+  "11": {
+    "description": "Sec 1: downloads font/format files, prints using them. Sec 2: downloads graphics, prints stored format.",
+    "sections": { "1": "Download fonts + print", "2": "Download graphics + print" }
+  },
+  "12": {
+    "description": "Sec 1: builds and saves a label image to printer memory. Sec 2: recalls, prints, deletes it; file list answers in log.",
+    "sections": { "1": "Build and save format", "2": "Print, recall, delete" }
+  },
+  "13": {
+    "description": "Cancel and pause tests. Sec 1 (~JA) should print NOTHING - that is the pass condition. Sec 2 (^PP) prints one label, pauses; use Resume for the second.",
+    "sections": { "1": "~JA cancel test (nothing should print)", "2": "^PP pause test (Resume for 2nd label)" },
+    "isolation": "off"
+  },
+  "14": { "description": "Diagnostic mode toggle (~JD/~JE are inside comments). Mostly a no-op label; doc says run it twice.", "button": "Run" },
+  "15": { "description": "~JG sensor calibration: feeds media while calibrating. No label, no cut - that's normal.", "button": "Calibrate" },
+  "16": { "description": "Sets ^JJ error handling and prints 1 line. Doc suggests interrupting the print to test recovery.", "button": "Print" },
+  "17": {
+    "description": "Dot density ^JMA vs ^JMB. JMB (sec 2) persists: everything after prints double-size until reset.",
+    "sections": { "1": "Print size A", "2": "Print size B" }
+  },
+  "18": {
+    "description": "Queue clearing. Sec 1 uses ~JA (safe everywhere, verified). Secs 2-3 use ~JP: WARNING - ~JP hard-locks the DPP-450 in every form (power cycle only); works on the Zebra ZD421. That difference IS the comparison data.",
+    "sections": {
+      "1": "~JA queue clear (safe, recommended)",
+      "2": "Paced ~JP probe (locks the DPP-450)",
+      "3": "Doc original ~JP (locks the DPP-450)"
+    },
+    "isolation": "off"
+  },
+  "19": {
+    "description": "Changes delimiter, saves (^JUS), factory-resets (^JUF), restores (^JUR). Deliberately persistent.",
+    "sections": { "1": "Print and save", "2": "Factory reset", "3": "Print after reset", "4": "Restore and print" },
+    "isolation": "off"
+  },
+  "20": {
+    "description": "Renames the printer (^KN), prints config (~WC), renames back, prints config again.",
+    "sections": { "1": "Rename printer", "2": "Print config", "3": "Rename back", "4": "Print config" }
+  },
+  "21": {
+    "description": "^LH label home offsets (0,0 vs 100,100). Persists until reset.",
+    "sections": { "1": "Print at home 0,0", "2": "Print at home 100,100" }
+  },
+  "22": {
+    "description": "^LS/^LT shift offsets: print at 0, then at 200. Offset persists until reset.",
+    "sections": { "1": "Print shift 0", "2": "Print shift 200" }
+  },
+  "23": {
+    "description": "^MD darkness: print at -30, then at +30. Darkness persists until reset.",
+    "sections": { "1": "Print darkness -30", "2": "Print darkness +30" }
+  },
+  "24": { "description": "Prints 1 label, then ^PH feeds an extra blank page.", "button": "Print + blank page" },
+  "25": {
+    "description": "^PR print speed: 3 copies fast (sec 1), 3 copies slow (sec 2). Speed persists.",
+    "sections": { "1": "Print fast x3", "2": "Print slow x3" }
+  },
+  "26": { "description": "^PW300: squeezes printing into a 300-dot width. Persists - the classic 'everything condensed' culprit.", "button": "Print narrow" },
+  "27": {
+    "description": "Counter reset: print config (~WC, note counters), reset (~RO1, no output), print config again. NOTE: the DPP-450's config lists no counters, so the reset is unverifiable on that printer.",
+    "sections": { "1": "Print config (before)", "2": "Reset counter (no output)", "3": "Print config (after)" }
+  },
+  "28": {
+    "description": "~SD absolute darkness: print at 0, then at 30. Persists until reset.",
+    "sections": { "1": "Print SD0", "2": "Print SD30" }
+  },
+  "29": { "description": "^SF serialization: prints 3 labels with an auto-incrementing field.", "button": "Print x3" },
+  "30": { "description": "^SN serial number: prints 3 labels with an incrementing number.", "button": "Print x3" },
+  "31": { "description": "Prints a full shipping label. Its ^BY barcode defaults persist into later barcodes." },
+  "32": { "description": "Prints the shipping label MIRRORED (^PMY). Mirror mode persists - auto-restore clears it.", "button": "Print mirrored" },
+  "33": {
+    "description": "Field block/format commands (^FC ^FH ^FM ^FP ^FT ^FV ^MC). Sec 3 is a huge PDF417. ^PR1 slow speed persists.",
+    "sections": { "1": "Print full page", "2": "Print no PDF417", "3": "Print PDF417 block" }
+  },
+  "34": {
+    "description": "^MNW: switches media tracking to web/gap sensing, then prints 1 line. Sending this also sets the app's Media selector to Gap/Notch so auto-restore doesn't immediately revert it. UNCONFIRMED on the DPP-450: the user manual describes gap-vs-mark sensor selection as also gated by a physical memory switch ('Use Gap Sensor', Function Setting mode) and DIP switch SW2 - the ZPL command alone may not fully switch sensor types on this hardware the way it does on a Zebra. Pending on-device confirmation.",
+    "sets_media": "Gap/Notch labels",
+    "sets_print_mode": "Cutter"
+  },
+  "35": {
+    "description": "^MNM: switches media tracking to black-mark sensing, then prints 1 line. Sending this also sets the app's Media selector to Black mark so auto-restore doesn't immediately revert it. UNCONFIRMED on the DPP-450: same physical memory-switch/DIP-switch caveat as set 34 - see its description.",
+    "sets_media": "Black mark",
+    "sets_print_mode": "Cutter"
+  },
+  "36": { "description": "Prints ^CI2 charset and ^FB justification samples (left/center/right/justified)." },
+  "37": {
+    "description": "^MU units: dots, mm, inches - one box each (settings + draw travel in one send so auto-restore can't reset units mid-test). Unit change persists.",
+    "sections": { "1": "Units: dots", "2": "Units: mm", "3": "Units: inches" }
+  },
+  "38": { "description": "~HD head diagnostics: answers into the log. No paper output.", "button": "Query" },
+  "39": { "description": "^HG host graphic: returns a stored graphic's data into the log. No paper output.", "button": "Query" },
+  "40": { "description": "^HH configuration: returns the full config listing into the log. No paper output.", "button": "Query" },
+  "41": { "description": "~HI host identification: printer model/firmware answers into the log. No paper output.", "button": "Query" },
+  "42": { "description": "~HM RAM status: memory figures answer into the log. No paper output.", "button": "Query" },
+  "43": { "description": "~HS host status: the 3-line status block answers into the log. No paper output.", "button": "Query" },
+  "44": { "description": "~HU ZebraNet alert config: answers into the log. No paper output.", "button": "Query" },
+  "45": { "description": "^HW file directory listing: answers into the log. No paper output.", "button": "Query" },
+  "46": { "description": "^HY: uploads a stored graphic back to the host, into the log. No paper output.", "button": "Query" },
+  "47": {
+    "description": "^FD character-limit stress test: the same oversized payload in scalable font 0 vs bitmap font A.",
+    "sections": { "1": "Long (4800 chars), font 0", "2": "Long (4800 chars), font A", "3": "Short (320 chars), font 0", "4": "Short (320 chars), font A" }
+  },
+  "48": { "description": "Prints rounded-corner boxes at increasing corner radii." },
+  "49": { "description": "^HZa display description: printer XML answers into the log. No paper output.", "button": "Query" }
+}

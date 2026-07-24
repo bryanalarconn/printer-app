@@ -1,0 +1,5 @@
+^XA
+^CFA,30,15^LL300
+^PW300
+^FO50,50^FDThis is PW300........^FS
+^XZ

@@ -1,0 +1,8 @@
+^XA
+~SD30
+^XZ
+^XA
+^CFA,30,15^LL600
+~SD30
+^FO50,50^FDThis is SD30^FS
+^XZ

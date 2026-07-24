@@ -1,0 +1,8 @@
+^XA
+^LS200^LT200
+^XZ
+^XA
+^CFA,30,15^MMC,N^MNN^LL400
+^LS200^LT200
+^FO50,50^FDFor this, 200 was applied to LS and LT^FS
+^XZ

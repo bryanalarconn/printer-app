@@ -1,0 +1,4 @@
+^XA^CFA,50,15^LL200
+^FX Testing JM Command^JMB
+^FO50,50^FDSize B^FS
+^XZ

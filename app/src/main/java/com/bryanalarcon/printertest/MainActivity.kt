@@ -15,6 +15,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,17 +31,23 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -70,10 +79,9 @@ import kotlinx.coroutines.launch
  * "content" parameter is the { Text("hi") } block. Swift has the same feature
  * (trailing closures), Compose just uses it everywhere.
  *
- * State flow of this screen: App() decides which of three UIs to show
- * (permission gate, device list, or test screen) purely from state values.
- * When a state value changes, Compose re-runs the affected functions and the
- * UI updates. Same mental model as SwiftUI: UI is a function of state.
+ * SISTER-APP NOTE: this screen mirrors the Mac tool (mac_printer_tool) - the
+ * same buttons with the same labels and captions, the same dropdown options,
+ * the same tabs. When wording changes in one app it must change in the other.
  */
 
 /**
@@ -83,27 +91,17 @@ import kotlinx.coroutines.launch
  */
 class MainActivity : ComponentActivity() {
 
-    // "lateinit var" declares a non null property that will be assigned before
-    // first use (here, in onCreate). It avoids making the type nullable just
-    // because initialization happens late. Swift's closest cousin is an
-    // implicitly unwrapped optional (BluetoothPrinterManager!).
     private lateinit var manager: BluetoothPrinterManager
 
-    // "override" works like Swift's override. The "?" on Bundle? means the
-    // saved state may be absent (first launch).
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Fetch the app wide singleton. The connection must survive this Activity
         // being destroyed and recreated (rotation, theme change, low memory), so
         // the Activity must not own it.
         manager = BluetoothPrinterManager.get(applicationContext)
-        // setContent { } is the bridge from the Activity world into Compose,
-        // like UIHostingController(rootView:) bridging UIKit to SwiftUI.
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    // safeDrawingPadding keeps content out of the status bar and
-                    // camera cutout, SwiftUI's safe area handling made explicit.
                     Box(modifier = Modifier.safeDrawingPadding()) {
                         App(manager)
                     }
@@ -116,38 +114,25 @@ class MainActivity : ComponentActivity() {
 /**
  * Runtime permission prompts only exist on Android 12 (API 31) and newer for
  * Bluetooth. Older versions granted Bluetooth at install time.
- * Single expression functions use "=" instead of a braced body.
  */
 private fun needsRuntimePermission() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
 /**
  * The root composable. Owns the permission state and the two navigation values
  * (which device is selected, which connection strategy is active), and picks
- * which screen to show. There is no navigation library: showing a different
- * screen is literally just an if/else on state, which is all a test app needs.
+ * which screen to show.
  */
 @Composable
 fun App(manager: BluetoothPrinterManager) {
-    // LocalContext.current fetches the Android Context from the composition,
-    // similar to reading a SwiftUI @Environment value.
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    // remember { mutableStateOf(...) } is Compose's @State. "remember" keeps the
-    // value alive across re-renders; mutableStateOf makes writes trigger re-renders.
-    // The "by" keyword is property delegation: it lets us type "permissionGranted"
-    // instead of "permissionGranted.value" everywhere.
     var permissionGranted by remember {
         mutableStateOf(
-            // Pre-check: either we are on an old Android, or the user already granted
-            // BLUETOOTH_CONNECT in a previous session.
             !needsRuntimePermission() ||
                 ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
                 PackageManager.PERMISSION_GRANTED
         )
     }
-    // SCAN is optional: it only lets us cancel a discovery scan before connecting
-    // (a speed optimization). The app is gated on CONNECT alone, but we ask for
-    // both together so the connect path can use cancelDiscovery when possible.
     var scanGranted by remember {
         mutableStateOf(
             !needsRuntimePermission() ||
@@ -156,14 +141,9 @@ fun App(manager: BluetoothPrinterManager) {
         )
     }
 
-    // The modern Android way to show a system permission dialog: register a
-    // launcher plus a result callback. The trailing lambda receives a map of
-    // permission name to granted/denied after the user answers.
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        // "in" checks map membership. Only update flags that were actually part
-        // of this result, so an unrelated dialog cannot reset our state.
         if (Manifest.permission.BLUETOOTH_CONNECT in results) {
             permissionGranted = results[Manifest.permission.BLUETOOTH_CONNECT] == true
         }
@@ -172,9 +152,6 @@ fun App(manager: BluetoothPrinterManager) {
         }
     }
 
-    // LaunchedEffect(Unit) runs its block once when this composable first appears,
-    // like SwiftUI's .onAppear or .task. Passing Unit as the key means
-    // "no dependency, never re-run".
     LaunchedEffect(Unit) {
         if (!permissionGranted || !scanGranted) {
             permissionLauncher.launch(
@@ -186,8 +163,6 @@ fun App(manager: BluetoothPrinterManager) {
         }
     }
 
-    // Screen 0: the permission gate. Without CONNECT nothing else can work,
-    // so we return early and render only this.
     if (!permissionGranted) {
         Column(
             modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -208,27 +183,15 @@ fun App(manager: BluetoothPrinterManager) {
         return
     }
 
-    // A coroutine scope tied to this composable's lifetime, for launching work
-    // from button taps. Equivalent in spirit to starting a Task { } from a
-    // SwiftUI button action.
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-
-    // collectAsState subscribes this UI to a StateFlow: every new value causes a
-    // re-render. It is the Compose equivalent of @ObservedObject/@Published.
     val state by manager.state.collectAsState()
-
-    // Which paired device the user picked. null means "still on the picker screen".
-    // The explicit <BluetoothDevice?> tells the compiler the state can hold null.
     var selectedDevice by remember { mutableStateOf<BluetoothDevice?>(null) }
-
-    // The experiment toggle: hold one socket open across prints, or open and close
-    // a fresh socket for every print. Both strategies are under test in this app.
     var keepConnectionOpen by remember { mutableStateOf(true) }
 
-    // Copy to a local val so Kotlin can "smart cast" it: after the null check the
-    // compiler treats "device" as non null inside the else branch. It cannot do
-    // that with the delegated property directly because another thread could
-    // theoretically change it between the check and the use.
+    // The 49 code sets come from assets/code_sets/, a synced copy of the
+    // canonical folder shared with the Mac tool. remember { } loads them once.
+    val codeSets = remember { CodeSetLoader.load(context) }
+
     val device = selectedDevice
     if (device == null) {
         DeviceListScreen(
@@ -241,37 +204,33 @@ fun App(manager: BluetoothPrinterManager) {
             manager = manager,
             device = device,
             state = state,
+            codeSets = codeSets,
             keepConnectionOpen = keepConnectionOpen,
             onToggleMode = { keep ->
                 keepConnectionOpen = keep
-                // Switching into per-print mode should not leave a stale socket open.
                 if (!keep) scope.launch { manager.disconnect() }
             },
             onChangeDevice = {
                 scope.launch { manager.disconnect() }
-                selectedDevice = null // setting this back to null shows the picker again
+                selectedDevice = null
             }
         )
     }
 }
 
 /**
- * Screen 1: a settings-app style list of paired devices. Tapping one connects to
- * it; nothing happens automatically. On success the parent is told through the
- * onConnected callback, which is how child composables communicate upward
- * (identical to passing closures into a SwiftUI subview).
+ * Screen 1: a settings-app style list of paired devices. Tapping one connects
+ * to it; nothing happens automatically.
  */
 @SuppressLint("MissingPermission") // permission is guaranteed by the gate in App()
 @Composable
 fun DeviceListScreen(
     manager: BluetoothPrinterManager,
     state: ConnectionState,
-    onConnected: (BluetoothDevice) -> Unit // "(A) -> Unit" is Swift's (A) -> Void
+    onConnected: (BluetoothDevice) -> Unit
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var devices by remember { mutableStateOf(manager.bondedDevices()) }
-    // While a connect attempt is running this holds that device's MAC address,
-    // used to show a spinner on the right row and to ignore extra taps.
     var connectingAddress by remember { mutableStateOf<String?>(null) }
     val log by manager.log.collectAsState()
 
@@ -291,23 +250,14 @@ fun DeviceListScreen(
         )
         Spacer(Modifier.height(8.dp))
 
-        // LazyColumn builds rows on demand as you scroll, like SwiftUI's List.
-        // weight(1f) means "take all vertical space the fixed siblings do not use",
-        // which pins the log panel to the bottom.
         LazyColumn(modifier = Modifier.weight(1f)) {
-            // items(...) generates one composable per element. The key lambda gives
-            // each row a stable identity (like ForEach(id:)) so Compose can reuse rows.
             items(devices, key = { it.address }) { device ->
                 val isConnecting = connectingAddress == device.address
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        // Disable all taps while any connect is in flight.
                         .clickable(enabled = connectingAddress == null) {
                             connectingAddress = device.address
-                            // Button callbacks cannot suspend, so hop into a coroutine
-                            // to call the suspending connect(). Same pattern as
-                            // wrapping await calls in Task { } inside a SwiftUI action.
                             scope.launch {
                                 val ok = manager.connect(device)
                                 connectingAddress = null
@@ -336,9 +286,6 @@ fun DeviceListScreen(
             }
         }
 
-        // "is" both checks the type and smart casts: inside this branch, "state"
-        // is known to be Error, so state.message is accessible. This is Kotlin's
-        // version of "if case .error(let message) = state" in Swift.
         if (state is ConnectionState.Error) {
             Text(
                 state.message,
@@ -351,58 +298,105 @@ fun DeviceListScreen(
 }
 
 /**
- * Screen 2: the actual test harness. Status header, strategy toggles, utility
- * buttons, the scrollable list of all 49 code sets, and the log pinned at the
- * bottom.
+ * Screen 2: the test harness. Status header with live printer flags, strategy
+ * toggles, Media/Print-mode dropdowns, the five utility buttons, then two tabs
+ * (code sets / ZPL console) with the log pinned below - the same layout and
+ * wording as the Mac tool's test page.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TestScreen(
     manager: BluetoothPrinterManager,
     device: BluetoothDevice,
     state: ConnectionState,
+    codeSets: List<CodeSet>,
     keepConnectionOpen: Boolean,
     onToggleMode: (Boolean) -> Unit,
     onChangeDevice: () -> Unit
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val log by manager.log.collectAsState()
-    // Blocks all Print buttons while a send is running, so payloads cannot overlap.
     var busy by remember { mutableStateOf(false) }
-    // When on, every print carries the settings reset block along with it.
-    // Turn OFF when deliberately testing settings persistence (code sets 19-23, 28).
     var autoRestore by remember { mutableStateOf(true) }
+    var statusFlags by remember { mutableStateOf("") }
+    // Defaults per printer are allowed to differ between the sister apps
+    // (the options are identical): DPP-450 tears off; the Mac's ZD421 cuts.
+    var mediaMode by remember { mutableStateOf("Continuous (receipt)") }
+    var printMode by remember { mutableStateOf("Tear off") }
+    var selectedTab by remember { mutableStateOf(0) }
+    val consoleHistory = remember { mutableStateListOf<String>() }
 
-    // Local functions: Kotlin lets you nest functions inside functions. These two
-    // close over the state above (busy, scope, device), like nested funcs in Swift.
+    fun restoreBlock() = buildRestoreDefaults(
+        MEDIA_TRACKING_MODES.getValue(mediaMode),
+        PRINT_MODES.getValue(printMode)
+    )
 
-    // The one funnel through which every payload leaves this screen. Picks the
-    // connection strategy based on the toggle.
-    fun sendPayload(label: String, writes: List<String>, gapMs: Long = 0L) {
+    // Local suspend helpers: route through the strategy the toggle selects.
+    suspend fun runCommand(label: String, zpl: String): String =
+        if (keepConnectionOpen) manager.command(label, zpl)
+        else manager.connectCommandDisconnect(device, label, zpl)
+
+    suspend fun refreshFlags() {
+        val st = BluetoothPrinterManager.parseStatus(runCommand("~HS", "~HS"))
+        // Same wording as the Mac tool's flags line.
+        val paper = if (st.paperOut == true) "PAPER OUT" else "paper ok"
+        val pause = if (st.pause == true) "PAUSED" else "not paused"
+        statusFlags = "$paper  |  $pause  |  buffer: ${st.buffer}  |  label length: ${st.labelLen}"
+    }
+
+    fun checkStatus() {
         if (busy) return
         busy = true
         scope.launch {
-            if (keepConnectionOpen) {
-                manager.send(label, writes, gapMs)
-            } else {
-                manager.connectSendDisconnect(device, label, writes, gapMs)
-            }
+            refreshFlags()
+            busy = false
+        }
+    }
+
+    /** Recovery buttons: bypass the guard (they must work on a faulted printer). */
+    fun utility(label: String, zpl: String) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            runCommand(label, zpl)
+            // Chain a flags refresh in keep-open mode; in per-print mode that
+            // would open a whole extra connection just for the flags (the Mac
+            // tool skips it there too).
+            if (keepConnectionOpen) refreshFlags()
             busy = false
         }
     }
 
     fun sendSection(codeSet: CodeSet, section: ZplSection) {
-        // The restore block rides along as the final write of the same sequence,
-        // so ordering is guaranteed in both connection modes.
-        val label = "${codeSet.name} / ${section.label}" +
-            if (autoRestore) " +restore" else ""
-        val writes =
-            if (autoRestore) section.writes + RESTORE_DEFAULTS_ZPL else section.writes
-        sendPayload(label, writes, section.gapMs)
+        if (busy) return
+        busy = true
+        scope.launch {
+            // Some sets (34, 35) configure the printer's own media/print mode
+            // as part of what they test. Sync the dropdowns to match BEFORE
+            // computing the restore block below, so auto-restore reasserts
+            // that mode instead of silently reverting it to whatever was
+            // previously selected.
+            codeSet.setsMedia?.let { if (it in MEDIA_TRACKING_MODES) mediaMode = it }
+            codeSet.setsPrintMode?.let { if (it in PRINT_MODES) printMode = it }
+            // The restore block rides along as the final write of the same
+            // sequence, so ordering is guaranteed in both connection modes.
+            val label = "${codeSet.name} / ${section.label}" +
+                if (autoRestore) " +restore" else ""
+            val writes =
+                if (autoRestore) section.writes + restoreBlock() else section.writes
+            if (keepConnectionOpen) {
+                manager.send(label, writes, section.gapMs)
+                refreshFlags()
+            } else {
+                manager.connectSendDisconnect(device, label, writes, section.gapMs)
+            }
+            busy = false
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // ---- Status header ----
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -410,10 +404,6 @@ fun TestScreen(
             ) {
                 Column {
                     Text(
-                        // "when" is Kotlin's switch, and as an EXPRESSION it returns a
-                        // value, so the whole block computes the status string.
-                        // Because ConnectionState is sealed, the compiler enforces
-                        // that every case is covered.
                         text = when (state) {
                             is ConnectionState.Connected -> "Connected: ${state.deviceName}"
                             is ConnectionState.Connecting -> "Connecting: ${state.deviceName}…"
@@ -433,6 +423,10 @@ fun TestScreen(
                 }
                 TextButton(onClick = onChangeDevice) { Text("Change device") }
             }
+            // Live printer flags from ~HS (Check status / after each print).
+            if (statusFlags.isNotEmpty()) {
+                Text(statusFlags, style = MaterialTheme.typography.bodySmall)
+            }
 
             // ---- Connection strategy toggle ----
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -444,8 +438,6 @@ fun TestScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(Modifier.weight(1f))
-                // Manual connect/disconnect only makes sense in keep-open mode;
-                // per-print mode manages the socket by itself.
                 if (keepConnectionOpen) {
                     val connected = state is ConnectionState.Connected
                     OutlinedButton(
@@ -459,7 +451,7 @@ fun TestScreen(
                 }
             }
 
-            // ---- Keepalive toggle (only relevant while holding a connection) ----
+            // ---- Keepalive toggle ----
             if (keepConnectionOpen) {
                 val keepalive by manager.keepaliveEnabled.collectAsState()
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -485,35 +477,100 @@ fun TestScreen(
                 )
             }
 
-            // ---- Utility buttons ----
-            // Unpause: recover from the pause tests (code sets 13/19).
-            // Clear queue: flush every buffered format.
-            // Restore defaults: manual settings reset if output ever looks wrong.
-            Row(
+            // ---- Media / Print mode dropdowns ----
+            // Selections feed the restore block, so a chosen mode survives
+            // prints instead of being reset by them. Same options as the Mac.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ModeDropdown(
+                    caption = "Media:",
+                    options = MEDIA_TRACKING_MODES.keys.toList(),
+                    selected = mediaMode,
+                    enabled = !busy
+                ) { choice ->
+                    mediaMode = choice
+                    utility(
+                        "Set media tracking: $choice",
+                        "^XA" + MEDIA_TRACKING_MODES.getValue(choice) + "^XZ"
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                ModeDropdown(
+                    caption = "Print mode:",
+                    options = PRINT_MODES.keys.toList(),
+                    selected = printMode,
+                    enabled = !busy
+                ) { choice ->
+                    printMode = choice
+                    utility(
+                        "Set print mode: $choice",
+                        "^XA" + PRINT_MODES.getValue(choice) + "^XZ"
+                    )
+                }
+            }
+
+            // ---- Utility buttons (none of these print a label) ----
+            // Labels and captions are shared canon with the Mac tool.
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                OutlinedButton(
-                    enabled = !busy,
-                    onClick = { sendPayload("Unpause (~PS)", listOf(UNPAUSE_ZPL)) }
-                ) { Text("Unpause") }
-                OutlinedButton(
-                    enabled = !busy,
-                    onClick = { sendPayload("Clear queue (~JA)", listOf(CANCEL_ALL_ZPL)) }
-                ) { Text("Clear queue") }
-                OutlinedButton(
-                    enabled = !busy,
-                    onClick = { sendPayload("Restore defaults", listOf(RESTORE_DEFAULTS_ZPL)) }
-                ) { Text("Restore defaults") }
+                UtilityButton("Check status", "Query ~HS and update\nthe flags above. No paper.", busy) {
+                    checkStatus()
+                }
+                UtilityButton("Resume", "Send ~PS to clear a pause\n(fault or ^PP test). No paper.", busy) {
+                    utility("Resume (~PS)", UNPAUSE_ZPL)
+                }
+                UtilityButton("Cancel jobs", "Send ~JA to discard every\nqueued format. No paper.", busy) {
+                    utility("Cancel jobs (~JA)", CANCEL_ALL_ZPL)
+                }
+                UtilityButton("Cut paper", "Feed a tiny blank label\nand cut it off.", busy) {
+                    utility("Cut paper", CUT_PAPER_ZPL)
+                }
+                UtilityButton("Reset settings", "Undo persistent settings\n(width, mirror, darkness...). No paper.", busy) {
+                    utility("Reset settings", restoreBlock())
+                }
             }
         }
         HorizontalDivider()
 
-        // ---- The 49 code sets ----
-        LazyColumn(modifier = Modifier.weight(1f)) {
-            itemsIndexed(ALL_CODE_SETS) { _, codeSet -> // "_" discards the unused index
-                CodeSetRow(codeSet, busy) { section -> sendSection(codeSet, section) }
-                HorizontalDivider()
+        // ---- Tabs: code sets / console ----
+        TabRow(selectedTabIndex = selectedTab) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                text = { Text("Test code sets") }
+            )
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                text = { Text("ZPL console") }
+            )
+        }
+
+        if (selectedTab == 0) {
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                itemsIndexed(codeSets) { _, codeSet ->
+                    CodeSetRow(codeSet, busy) { section -> sendSection(codeSet, section) }
+                    HorizontalDivider()
+                }
+            }
+        } else {
+            ConsoleTab(
+                modifier = Modifier.weight(1f),
+                busy = busy,
+                history = consoleHistory
+            ) { text ->
+                if (busy) return@ConsoleTab
+                busy = true
+                // Console sends bypass the guard and never get the restore
+                // block - it must be able to send ~PS/~JA to a faulted printer
+                // and run arbitrary experiments (same rule as the Mac console).
+                consoleHistory.remove(text)
+                consoleHistory.add(0, text)
+                scope.launch {
+                    runCommand("console", text)
+                    busy = false
+                }
             }
         }
 
@@ -521,38 +578,150 @@ fun TestScreen(
     }
 }
 
+/** One utility button with the Mac tool's gray caption underneath. */
+@Composable
+fun UtilityButton(text: String, caption: String, busy: Boolean, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        OutlinedButton(enabled = !busy, onClick = onClick) { Text(text, fontSize = 12.sp) }
+        Text(
+            caption,
+            fontSize = 9.sp,
+            lineHeight = 11.sp,
+            color = MaterialTheme.colorScheme.outline,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+/** Small labeled dropdown (Media: / Print mode:), like the Mac's combo boxes. */
+@Composable
+fun ModeDropdown(
+    caption: String,
+    options: List<String>,
+    selected: String,
+    enabled: Boolean,
+    onSelect: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(caption, style = MaterialTheme.typography.bodyMedium)
+        Box {
+            TextButton(enabled = enabled, onClick = { expanded = true }) {
+                Text("$selected ▾", fontSize = 12.sp)
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                options.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option) },
+                        onClick = {
+                            expanded = false
+                            if (option != selected) onSelect(option)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
 /**
- * One row of the code set list. Single section sets show a Print button directly;
- * multi section sets expand on tap to reveal one button per section, because the
- * source document requires sections to be run independently.
+ * Free-form ZPL console, the port of the Mac tool's console tab: sends exactly
+ * what you type, no safety checks, no auto-restore. Responses appear in the log.
+ */
+@Composable
+fun ConsoleTab(
+    modifier: Modifier = Modifier,
+    busy: Boolean,
+    history: List<String>,
+    onSend: (String) -> Unit
+) {
+    var input by remember { mutableStateOf("") }
+    Column(modifier = modifier.padding(12.dp)) {
+        Text(
+            "Sends exactly what you type - no safety checks, no auto-restore. " +
+                "Responses appear in the log below.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = input,
+            onValueChange = { input = it },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 3,
+            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            placeholder = {
+                Text(
+                    "Examples:\n" +
+                        "  ^XA^FO50,50^FDHello^FS^XZ\n" +
+                        "  ~HS\n" +
+                        "  ! U1 getvar \"ezpl.print_mode\"",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp
+                )
+            }
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(
+            enabled = !busy && input.isNotBlank(),
+            onClick = { onSend(input) }
+        ) { Text("Send") }
+        Spacer(Modifier.height(8.dp))
+        Text("History (tap to reload)", style = MaterialTheme.typography.labelMedium)
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(history.size) { i ->
+                Text(
+                    history[i].replace("\n", "  "),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { input = history[i] }
+                        .padding(vertical = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * One row of the code set list. Single section sets show their button directly
+ * (text from meta.json, e.g. "Query" for the host-status sets); multi section
+ * sets expand on tap to one button per section.
  */
 @Composable
 fun CodeSetRow(codeSet: CodeSet, busy: Boolean, onSend: (ZplSection) -> Unit) {
     if (codeSet.sections.size == 1) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(codeSet.name, modifier = Modifier.weight(1f))
-            Button(enabled = !busy, onClick = { onSend(codeSet.sections[0]) }) { Text("Print") }
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(codeSet.name, modifier = Modifier.weight(1f))
+                Button(enabled = !busy, onClick = { onSend(codeSet.sections[0]) }) {
+                    Text(codeSet.button ?: "Print", fontSize = 12.sp)
+                }
+            }
+            codeSet.description?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+            }
         }
     } else {
-        // remember(key) resets this expansion state if the row is ever reused for a
-        // different code set (keyed the same way SwiftUI identifies ForEach content).
         var expanded by remember(codeSet.name) { mutableStateOf(false) }
         Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { expanded = !expanded }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
-                Text(codeSet.name, modifier = Modifier.weight(1f))
-                Text(if (expanded) "▲" else "▼ ${codeSet.sections.size} sections")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(codeSet.name, modifier = Modifier.weight(1f))
+                    Text(if (expanded) "▲" else "▼ ${codeSet.sections.size} steps")
+                }
+                codeSet.description?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                }
             }
             if (expanded) {
-                codeSet.sections.forEach { section ->
+                codeSet.sections.forEachIndexed { i, section ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -560,11 +729,16 @@ fun CodeSetRow(codeSet: CodeSet, busy: Boolean, onSend: (ZplSection) -> Unit) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            section.label,
+                            "Step ${i + 1}",
                             style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.width(52.dp)
                         )
-                        Button(enabled = !busy, onClick = { onSend(section) }) { Text("Print") }
+                        Spacer(Modifier.weight(1f))
+                        // The section label IS the action, so it goes on the button
+                        // itself - same convention as the Mac tool.
+                        Button(enabled = !busy, onClick = { onSend(section) }) {
+                            Text(section.label, fontSize = 12.sp)
+                        }
                     }
                 }
             }
@@ -573,21 +747,19 @@ fun CodeSetRow(codeSet: CodeSet, busy: Boolean, onSend: (ZplSection) -> Unit) {
 }
 
 /**
- * The timestamped event log pinned to the bottom of both screens. This is the
- * reliability dashboard: every TX, RX, drop, reconnect attempt and error lands here.
+ * The timestamped event log pinned to the bottom of both screens: every TX,
+ * RX, drop, reconnect attempt and refusal lands here.
  */
 @Composable
 fun LogPanel(log: List<String>, onClear: () -> Unit) {
     val listState = rememberLazyListState()
-    // Auto scroll to the newest line whenever one arrives. LaunchedEffect keyed on
-    // log.size re-runs exactly when the line count changes.
     LaunchedEffect(log.size) {
         if (log.isNotEmpty()) listState.animateScrollToItem(log.size - 1)
     }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(160.dp)
+            .height(150.dp)
             .background(MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Row(
@@ -602,7 +774,7 @@ fun LogPanel(log: List<String>, onClear: () -> Unit) {
             items(log.size) { i ->
                 Text(
                     log[i],
-                    fontFamily = FontFamily.Monospace, // fixed width font keeps columns aligned
+                    fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
                     lineHeight = 14.sp
                 )

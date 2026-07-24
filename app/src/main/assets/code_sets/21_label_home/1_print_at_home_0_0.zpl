@@ -1,0 +1,5 @@
+^XA
+^CFA,30,15^LL400
+^LH0,0
+^FO50,50^FDThis is LH0,0!^FS
+^XZ

@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +23,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -46,6 +49,20 @@ sealed interface ConnectionState {
     data class Connected(val deviceName: String) : ConnectionState
     data class Error(val message: String) : ConnectionState
 }
+
+/**
+ * Parsed ~HS host-status response. Null fields mean the printer's answer was
+ * missing or unparseable. Field positions are the shared spec with the Mac
+ * sister tool (printer_conn.py status()): CSV field 1 = paper out,
+ * field 2 = paused, field 3 = label length, field 4 = formats in buffer.
+ */
+data class PrinterStatus(
+    val paperOut: Boolean?,
+    val pause: Boolean?,
+    val labelLen: String?,
+    val buffer: Int?,
+    val raw: String
+)
 
 /**
  * Owns the raw Bluetooth Classic (SPP/RFCOMM) connection to the printer.
@@ -87,6 +104,30 @@ class BluetoothPrinterManager private constructor( // "private constructor" forc
         private const val KEEPALIVE_INTERVAL_MS = 15_000L   // underscores are digit separators
         private val KEEPALIVE_BYTES = "\r\n".toByteArray(Charsets.US_ASCII)
         private const val RECONNECT_MAX_DELAY_MS = 30_000L
+
+        // Query timing, shared spec with the Mac tool: wait this long after a
+        // write before the printer has likely started replying, then keep
+        // reading until the line has been quiet for the quiet window.
+        // READ_QUIET_MS was raised from 800 to 2500 to match the Mac tool's
+        // Bluetooth transport - the DPP-450 over BT was observed on hardware
+        // not answering ~HS within the shorter window USB comfortably meets.
+        private const val POST_WRITE_SETTLE_MS = 300L
+        private const val READ_QUIET_MS = 2500L
+
+        /** ~HS response parsing, identical to the Mac tool's status(). */
+        fun parseStatus(text: String): PrinterStatus {
+            val lines = text.trim().lines().filter { it.isNotBlank() }
+            if (lines.isEmpty()) return PrinterStatus(null, null, null, null, text)
+            val fields = lines[0].split(",")
+            if (fields.size < 5) return PrinterStatus(null, null, null, null, text)
+            return PrinterStatus(
+                paperOut = fields[1].trim() != "0",
+                pause = fields[2].trim() != "0",
+                labelLen = fields[3].trim(),
+                buffer = fields[4].trim().toIntOrNull() ?: 0,
+                raw = text
+            )
+        }
 
         // The singleton slot. @Volatile makes writes visible across threads immediately.
         @Volatile
@@ -160,6 +201,17 @@ class BluetoothPrinterManager private constructor( // "private constructor" forc
 
     /** UI toggle for the keepalive ping. Public and mutable on purpose, it is a setting. */
     val keepaliveEnabled = MutableStateFlow(true)
+
+    /**
+     * Response capture for query(): while a query is waiting, the reader loop
+     * routes incoming chunks into this channel instead of logging them, so the
+     * query can collect the printer's answer. A Channel is a coroutine-safe
+     * queue, closest to an AsyncStream in Swift.
+     */
+    private val rxChannel = Channel<ByteArray>(Channel.UNLIMITED)
+
+    @Volatile
+    private var capturing = false
 
     private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
@@ -293,7 +345,16 @@ class BluetoothPrinterManager private constructor( // "private constructor" forc
                         if (socket === s) onConnectionLost("Connection closed by printer")
                         break
                     }
-                    if (n > 0) logLine("RX ${n}B: ${renderBytes(buffer, n)}")
+                    if (n > 0) {
+                        if (capturing) {
+                            // A query is waiting for this response; hand it over
+                            // instead of logging (the query logs the whole answer
+                            // once it has all of it).
+                            rxChannel.trySend(buffer.copyOf(n))
+                        } else {
+                            logLine("RX (${n}B): ${renderBytes(buffer, n)}")
+                        }
+                    }
                 }
             } catch (e: IOException) {
                 if (isActive && socket === s) {
@@ -372,6 +433,118 @@ class BluetoothPrinterManager private constructor( // "private constructor" forc
     }
 
     /**
+     * Sends a command and collects whatever the printer answers, by borrowing
+     * the reader loop's bytes for the duration (see [capturing]). This is what
+     * Check status, the recovery buttons, and the ZPL console are built on -
+     * the direct equivalent of the Mac tool's _query(). Assumes ioMutex held.
+     */
+    private suspend fun queryLocked(label: String, zpl: String): String =
+        withContext(Dispatchers.IO) {
+            val s = socket
+            if (s == null || !s.isConnected) {
+                logLine("Not connected - cannot send \"$label\"")
+                return@withContext ""
+            }
+            // Drain anything stale a previous command left behind, so this
+            // query's answer can't get mixed with old bytes.
+            while (rxChannel.tryReceive().isSuccess) { /* discard */ }
+            capturing = true
+            try {
+                val bytes = zpl.toByteArray(Charsets.US_ASCII)
+                s.outputStream.write(bytes)
+                s.outputStream.flush()
+                logLine("TX \"$label\" (${bytes.size} bytes)")
+                delay(POST_WRITE_SETTLE_MS)
+                // Collect chunks until the line has been quiet for READ_QUIET_MS.
+                // withTimeoutOrNull returns null on timeout instead of throwing.
+                val out = ByteArrayOutputStream()
+                while (true) {
+                    val chunk = withTimeoutOrNull(READ_QUIET_MS) { rxChannel.receive() } ?: break
+                    out.write(chunk)
+                }
+                val resp = out.toByteArray()
+                if (resp.isNotEmpty()) logLine("RX (${resp.size}B): ${renderBytes(resp, resp.size)}")
+                String(resp, Charsets.US_ASCII)
+            } catch (e: IOException) {
+                val msg = "Write failed for \"$label\": ${e.message}"
+                logLine(msg)
+                closeSocketQuietly()
+                _state.value = ConnectionState.Error(msg)
+                ""
+            } finally {
+                capturing = false
+            }
+        }
+
+    /** ~HS status query + parse. Assumes ioMutex held. */
+    private suspend fun statusLocked(): PrinterStatus = parseStatus(queryLocked("~HS", "~HS"))
+
+    /**
+     * The pre-send safety guard, identical to the Mac tool's: ask the printer
+     * how it's doing before throwing a job at it, and refuse if the answer
+     * confirms a bad state. Exists because of a real incident - jobs stacked
+     * onto a paused printer once fed through an entire roll when unpaused.
+     *
+     * If ~HS can't be read at all, this WARNS and returns true (send anyway)
+     * rather than refusing forever: "status unreadable" and "status confirms
+     * a fault" are different things, and treating them the same would
+     * permanently brick printing on a printer that just doesn't answer ~HS
+     * reliably over its current transport (confirmed on hardware: the
+     * DPP-450 over Bluetooth). The protection only applies when a bad state
+     * is actually confirmed.
+     */
+    private suspend fun guardLocked(label: String): Boolean {
+        val pre = statusLocked()
+        if (pre.paperOut == null) {
+            logLine("Could not read printer status before \"$label\" - sending anyway")
+            return true
+        }
+        if (pre.paperOut) {
+            logLine("Refusing to send \"$label\": printer reports paper out")
+            return false
+        }
+        if (pre.pause == true) {
+            logLine("Refusing to send \"$label\": printer is paused - use Resume first")
+            return false
+        }
+        if ((pre.buffer ?: 0) > 0) {
+            logLine(
+                "Refusing to send \"$label\": ${pre.buffer} format(s) already queued - " +
+                    "use Cancel jobs first (stacking jobs caused a runaway print previously)"
+            )
+            return false
+        }
+        return true
+    }
+
+    /** Keep-open-mode command with response capture (recovery buttons, console). */
+    suspend fun command(label: String, zpl: String): String = ioMutex.withLock {
+        val device = lastDevice
+        if (device != null) userDisconnected = false
+        if (socket?.isConnected != true) {
+            if (device == null) {
+                logLine("Not connected - cannot send \"$label\"")
+                return@withLock ""
+            }
+            if (!connectLocked(device)) return@withLock ""
+        }
+        queryLocked(label, zpl)
+    }
+
+    /** Per-print-mode command: connect, query, close. */
+    suspend fun connectCommandDisconnect(device: BluetoothDevice, label: String, zpl: String): String {
+        userDisconnected = true
+        reconnectJob?.cancel()
+        return ioMutex.withLock {
+            if (!connectLocked(device)) return@withLock ""
+            val response = queryLocked(label, zpl)
+            delay(500)
+            disconnectLocked()
+            response
+        }
+    }
+
+    /**
      * The main "print this" entry point, used in keep-connection-open mode.
      *
      * A payload is a list of byte chunks ("writes"). Most tests are a single chunk;
@@ -380,6 +553,9 @@ class BluetoothPrinterManager private constructor( // "private constructor" forc
      *
      * Behavior promises:
      * - if the link is down, connect first
+     * - unless bypassGuard is set, the ~HS pre-send guard runs first (console
+     *   sends and the recovery buttons bypass it - they must work on a printer
+     *   the guard would refuse)
      * - if the very first chunk fails to send, reconnect and retry the whole payload
      *   once (nothing reached the printer, so a retry cannot double print)
      * - if a later chunk fails, report failure without retrying (a retry would
@@ -388,7 +564,12 @@ class BluetoothPrinterManager private constructor( // "private constructor" forc
      * "= 0L" gives gapMs a default value, so callers with one chunk can omit it.
      * Kotlin uses default parameters where Swift would also use default parameters.
      */
-    suspend fun send(label: String, writes: List<String>, gapMs: Long = 0L): Boolean =
+    suspend fun send(
+        label: String,
+        writes: List<String>,
+        gapMs: Long = 0L,
+        bypassGuard: Boolean = false
+    ): Boolean =
         ioMutex.withLock {
             val device = lastDevice
             // Pressing Print means the user wants the link up, so re-arm auto reconnect
@@ -402,6 +583,7 @@ class BluetoothPrinterManager private constructor( // "private constructor" forc
                 logLine("Not connected - connecting before send…")
                 if (!connectLocked(device)) return@withLock false
             }
+            if (!bypassGuard && !guardLocked(label)) return@withLock false
             var failedAt = sendWritesLocked(label, writes, gapMs)
             if (failedAt == 0 && device != null && !userDisconnected) {
                 logLine("Retrying \"$label\" after reconnect…")
@@ -467,12 +649,17 @@ class BluetoothPrinterManager private constructor( // "private constructor" forc
         device: BluetoothDevice,
         label: String,
         writes: List<String>,
-        gapMs: Long = 0L
+        gapMs: Long = 0L,
+        bypassGuard: Boolean = false
     ): Boolean {
         userDisconnected = true
         reconnectJob?.cancel()
         return ioMutex.withLock {
             if (!connectLocked(device)) return@withLock false
+            if (!bypassGuard && !guardLocked(label)) {
+                disconnectLocked()
+                return@withLock false
+            }
             val ok = sendWritesLocked(label, writes, gapMs) == -1
             // Closing immediately after write() can discard bytes still in transit,
             // so give the stack half a second to hand everything to the printer.
